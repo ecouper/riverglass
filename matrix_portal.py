@@ -13,7 +13,7 @@ def create_matrix():
     options.hardware_mapping = 'adafruit-hat'
     
     # Use the multiplexing mapping that gave you the sharpest image
-    options.led_multiplexing = 1
+    options.multiplexing = 1
     
     # Drop privileges to keep the Pi secure while running as root
     options.drop_privileges = False
