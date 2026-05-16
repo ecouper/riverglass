@@ -43,6 +43,8 @@ def main():
     # Initialize PyAudio
     p = pyaudio.PyAudio()
     
+    # Force ALSA to target the hardware card directly with a manual start
+    # to prevent memory access segmentation faults under sudo
     try:
         stream = p.open(
             format=pyaudio.paInt16,
@@ -50,8 +52,10 @@ def main():
             rate=RATE,
             input=True,
             input_device_index=DEVICE_INDEX,
-            frames_per_buffer=CHUNK
+            frames_per_buffer=CHUNK,
+            start=False  # Prevent automatic streaming during configuration
         )
+        stream.start_stream()  # Safely trigger manual stream capture
     except Exception as e:
         print(f"Error opening audio input device index {DEVICE_INDEX}: {e}")
         print("Double check your device index with 'arecord -l'")
@@ -76,7 +80,7 @@ def main():
             try:
                 data = stream.read(CHUNK, exception_on_overflow=False)
             except IOError:
-                continue # Skip frame if audio buffer overflows momentarily
+                continue  # Skip frame if audio buffer overflows momentarily
                 
             # 2. Convert raw binary data to numerical audio wave arrays
             audio_data = np.frombuffer(data, dtype=np.int16)
@@ -105,7 +109,7 @@ def main():
                 bar_heights.append(peak_heights[i])
 
             # 5. Render the graphics ONLY on working hardware columns (1 and 3)
-            draw.rectangle((0, 0, 63, 63), fill=(0, 0, 0)) # Clear frame to pure black
+            draw.rectangle((0, 0, 63, 63), fill=(0, 0, 0))  # Clear frame to pure black
             
             # Width of each individual bar and spacing between them
             SUB_BAR_WIDTH = 3
