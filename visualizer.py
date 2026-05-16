@@ -20,7 +20,7 @@ def create_matrix():
 
 # --- AUDIO SETTINGS ---
 # Targets 'plughw:1,0' directly by name matching Card 1
-DEVICE_NAME = "hw:1,0"  
+DEVICE_INDEX = 0  
 CHANNELS = 1
 RATE = 44100          
 CHUNK = 1024          
@@ -43,7 +43,7 @@ def main():
     # Open a direct hardware input stream using sounddevice
     try:
         stream = sd.InputStream(
-            device=DEVICE_NAME,
+            device=DEVICE_INDEX,
             channels=CHANNELS,
             samplerate=RATE,
             blocksize=CHUNK,
