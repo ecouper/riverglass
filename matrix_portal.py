@@ -14,7 +14,10 @@ def create_matrix():
     
     # Use the multiplexing mapping that gave you the sharpest image
     options.multiplexing = 1
-    
+
+    # Rotate the coordinate system to fix the orientation
+    options.pixel_mapper_config = "Rotate:90"
+
     # Drop privileges to keep the Pi secure while running as root
     options.drop_privileges = False
 
