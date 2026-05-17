@@ -12,6 +12,12 @@ def create_matrix():
     options.hardware_mapping = 'adafruit-hat'
     options.multiplexing = 1
     options.pixel_mapper_config = "Rotate:90"
+    
+    # --- THE HARDWARE UNLOCK LINE ---
+    # This explicitly tells the driver that the E-line is active 
+    # so it can address all columns (1, 2, 3, and 4) continuously.
+    options.row_address_type = 0  
+    
     options.drop_privileges = False
     return RGBMatrix(options=options)
 
@@ -29,7 +35,7 @@ def main():
             
             # Draw a solid white horizontal bar right across the middle of the canvas
             # (Row 32, scanning from column 0 all the way to column 63)
-            draw.line((0, 32, 63, 32), fill=(255, 255, 255), width=3)
+            draw.line((0, 32, 63, 32), fill=(255, 255, 255), width=10)
             
             # Send the image to the physical panel
             matrix.SetImage(canvas)
