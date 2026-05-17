@@ -11,8 +11,8 @@ def create_matrix():
     options.parallel = 1
     options.hardware_mapping = 'adafruit-hat'
     
-    # Try Multiplexing Type 4 (Interleaved rows/columns)
-    options.multiplexing = 4
+    # Try Multiplexing Type 5 (Interleaved rows/columns)
+    options.multiplexing = 5
     
     options.pixel_mapper_config = "Rotate:90"
     options.row_address_type = 0  
