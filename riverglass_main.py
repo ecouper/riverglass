@@ -1,8 +1,11 @@
 import asyncio
 import time
 import sys
-import numpy as np
+import io
+import wave
+import aiohttp
 import sounddevice as sd
+import numpy as np
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from PIL import Image, ImageDraw
 
@@ -22,112 +25,151 @@ def create_matrix():
 # --- SYSTEM STATES ---
 class RiverglassState:
     def __init__(self):
-        self.current_mode = "WEATHER"  # Options: "WEATHER", "MUSIC"
-        self.album_art_image = None    # Holds the downloaded PIL Image object
-        self.current_song_id = None    # Tracks the currently playing track string
-        self.weather_data = {"temp": "--", "condition": "Loading..."}
+        self.current_mode = "WEATHER"  # "WEATHER" or "MUSIC"
+        self.album_art_image = None    # Holds the active PIL Image object
+        self.current_song_id = None    # Tracks unique song signature
+        self.weather_data = {"temp": "72°F", "condition": "Clear"}
         self.is_running = True
 
 system = RiverglassState()
 
+# --- HELPER: CONVERT RAW AUDIO TO WAV BYTES ---
+def convert_to_wav_bytes(audio_data, sample_rate):
+    byte_io = io.BytesIO()
+    with wave.open(byte_io, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)  # 16-bit audio
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(audio_data.tobytes())
+    return byte_io.getvalue()
+
 # --- TASK 1: WEATHER & TIME UPDATER ---
 async def weather_updater_task():
-    """Background loop to fetch weather every 15 minutes and update local time."""
     print("Weather and Time engine initialized.")
     while system.is_running:
         try:
-            # TODO: Integrate local weather API fetch here later
+            # Placeholder for future live local weather integration
             system.weather_data["temp"] = "72°F"
             system.weather_data["condition"] = "Clear"
-            
-            # Sleep for 15 minutes between API calls
             await asyncio.sleep(900)
         except asyncio.CancelledError:
             break
 
-# --- TASK 2: ACOUSTIC FINGERPRINTING ENGINE (THE 10-SEC LISTEN) ---
+# --- TASK 2: ACOUSTIC FINGERPRINTING ENGINE WITH SILENCE GUARD ---
 async def music_listener_task():
-    """Wakes up every 10 seconds, samples audio, and identifies music."""
     print("Acoustic listening engine initialized.")
     
-    # Audio sampling parameters
     device_index = 0
-    sample_rate = 44100  # Most music ID APIs prefer 16kHz mono
-    duration = 4        # Record a 4-second snippet to identify the song
+    sample_rate = 44100  
+    duration = 5  
     
-    while system.is_running:
-        # Wait 10 seconds before the next check loop
-        await asyncio.sleep(10)
-        
-        print("Listening for music...")
-        try:
-            # Record audio non-blocking using sounddevice
-            # We wrap sd.rec in an asyncio executor so it doesn't freeze the screen graphics
-            loop = asyncio.get_event_loop()
-            audio_snippet = await loop.run_in_executor(
-                None, 
-                lambda: sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16', device=device_index)
-            )
-            # Wait for the 4-second recording hardware buffer to fill cleanly
-            await asyncio.sleep(duration) 
+    # Linked to your verified AudD account
+    AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
+    
+    async with aiohttp.ClientSession() as session:
+        while system.is_running:
+            # Check for music every 10 seconds
+            await asyncio.sleep(10)
             
-            # --- API SONG IDENTIFICATION LOGIC ---
-            # TODO: Send 'audio_snippet' to AudD / Shazam API here
-            detected_song = None  # Temporary placeholder simulating no music found
-            
-            if detected_song:
-                if system.current_song_id != detected_song["id"]:
-                    print(f"New song detected: {detected_song['title']}")
-                    system.current_song_id = detected_song["id"]
-                    # TODO: Download album art URL and convert to PIL Image
-                    # system.album_art_image = downloaded_image
-                    system.current_mode = "MUSIC"
-            else:
-                # No music heard, fall back to default weather view
-                if system.current_mode == "MUSIC":
-                    print("Music stopped. Reverting to weather view.")
-                    system.current_song_id = None
-                    system.album_art_image = None
-                    system.current_mode = "WEATHER"
+            try:
+                # 1. Record ambient room noise
+                loop = asyncio.get_event_loop()
+                audio_snippet = await loop.run_in_executor(
+                    None, 
+                    lambda: sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16', device=device_index)
+                )
+                await asyncio.sleep(duration)
+                
+                flattened_audio = audio_snippet.flatten()
+                
+                # 2. LOCAL VOLUME GUARD
+                # Calculate Root-Mean-Square (RMS) amplitude to check ambient volume
+                rms_volume = np.sqrt(np.mean(flattened_audio.astype(np.float32)**2))
+                
+                # If the room is fundamentally quiet, skip hitting the cloud entirely
+                if rms_volume < 40.0:
+                    if system.current_mode == "MUSIC":
+                        print(f"Room is quiet (Vol: {rms_volume:.1f}). Reverting to weather view.")
+                        system.current_song_id = None
+                        system.album_art_image = None
+                        system.current_mode = "WEATHER"
+                    continue
+                
+                print(f"Audio detected (Vol: {rms_volume:.1f}). Querying AudD...")
+                
+                # 3. Pack and send to API
+                wav_bytes = convert_to_wav_bytes(flattened_audio, sample_rate)
+                
+                data = aiohttp.FormData()
+                data.add_field('api_token', AUDD_API_TOKEN)
+                data.add_field('file', wav_bytes, filename='audio.wav', content_type='audio/wav')
+                data.add_field('return', 'apple_music,spotify') 
+                
+                async with session.post('https://api.audd.io/', data=data) as response:
+                    result = await response.json()
                     
-        except Exception as e:
-            print(f"Audio listening engine error: {e}")
+                if result.get("status") == "success" and result.get("result"):
+                    song_info = result["result"]
+                    song_id = f"{song_info.get('artist')}-{song_info.get('title')}"
+                    
+                    # If it's a new song, download the artwork
+                    if system.current_song_id != song_id:
+                        print(f"🎵 Identified Track: {song_info.get('title')} by {song_info.get('artist')}")
+                        system.current_song_id = song_id
+                        
+                        # Extract best high-res artwork URL available
+                        art_url = None
+                        if 'spotify' in song_info and song_info['spotify']:
+                            images = song_info['spotify'].get('album', {}).get('images', [])
+                            if images:
+                                art_url = images[0].get('url')
+                        if not art_url:
+                            art_url = song_info.get('album', {}).get('cover_image')
+                            
+                        if art_url:
+                            print(f"📥 Downloading artwork: {art_url}")
+                            async with session.get(art_url) as img_resp:
+                                if img_resp.status == 200:
+                                    img_data = await img_resp.read()
+                                    system.album_art_image = Image.open(io.BytesIO(img_data))
+                                    system.current_mode = "MUSIC"
+                else:
+                    # Sound was heard but no music matched; drop back to weather after track ends
+                    if system.current_mode == "MUSIC":
+                        print("No music match found. Swapping back to weather mode.")
+                        system.current_song_id = None
+                        system.album_art_image = None
+                        system.current_mode = "WEATHER"
+                        
+            except Exception as e:
+                print(f"Audio listening engine error: {e}")
 
 # --- TASK 3: GRAPHICS RENDERING CORE ---
 async def display_renderer_task(matrix):
-    """Main rendering loop hitting the physical panel canvas at 30FPS."""
     canvas = Image.new("RGB", (64, 64))
     draw = ImageDraw.Draw(canvas)
     
     print("Graphics rendering core active.")
     while system.is_running:
-        # Clear frame
         draw.rectangle((0, 0, 63, 63), fill=(0, 0, 0))
         
         if system.current_mode == "WEATHER":
-            # --- DRAW WEATHER & CLOCK VIEW ---
+            # Default Clock & Weather View
             current_time = time.strftime("%I:%M")
-            # Simple placeholder text graphics layout
-            draw.text((4, 8), current_time, fill=(255, 255, 255))
-            draw.text((4, 28), system.weather_data["temp"], fill=(0, 255, 255))
-            draw.text((4, 44), system.weather_data["condition"], fill=(0, 255, 0))
-            
+            draw.text((4, 4), current_time, fill=(255, 255, 255))
+            draw.text((4, 24), system.weather_data["temp"], fill=(0, 255, 255))
+            draw.text((4, 40), system.weather_data["condition"], fill=(0, 255, 0))
             matrix.SetImage(canvas)
             
         elif system.current_mode == "MUSIC" and system.album_art_image:
-            # --- DRAW ALBUM ART VIEW ---
-            # Resize downloaded art to a perfect 64x64 square and blast it across the panel
+            # Scale and display real album artwork across the grid configuration
             resized_art = system.album_art_image.resize((64, 64))
             matrix.SetImage(resized_art)
-            
         else:
-            # Fallback if mode is music but image hasn't loaded yet
             matrix.SetImage(canvas)
             
-        # Run at ~30 frames per second
         await asyncio.sleep(0.03)
 
-# --- MAIN ASYNC ORCHESTRATOR ---
 async def main():
     try:
         matrix = create_matrix()
@@ -135,7 +177,6 @@ async def main():
         print(f"Matrix hardware connection failed: {e}")
         sys.exit(1)
         
-    # Schedule all three loops to run completely independent and parallel
     try:
         await asyncio.gather(
             weather_updater_task(),
