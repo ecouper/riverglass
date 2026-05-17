@@ -10,14 +10,12 @@ def create_matrix():
     options.chain_length = 1
     options.parallel = 1
     options.hardware_mapping = 'adafruit-hat'
-    options.multiplexing = 1
+    
+    # Try Multiplexing Type 4 (Interleaved rows/columns)
+    options.multiplexing = 4
+    
     options.pixel_mapper_config = "Rotate:90"
-    
-    # --- THE HARDWARE UNLOCK LINE ---
-    # This explicitly tells the driver that the E-line is active 
-    # so it can address all columns (1, 2, 3, and 4) continuously.
     options.row_address_type = 0  
-    
     options.drop_privileges = False
     return RGBMatrix(options=options)
 
