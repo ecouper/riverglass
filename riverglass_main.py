@@ -52,7 +52,7 @@ async def music_listener_task():
     
     # Audio sampling parameters
     device_index = 0
-    sample_rate = 16000  # Most music ID APIs prefer 16kHz mono
+    sample_rate = 44100  # Most music ID APIs prefer 16kHz mono
     duration = 4        # Record a 4-second snippet to identify the song
     
     while system.is_running:
