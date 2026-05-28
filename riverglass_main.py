@@ -25,7 +25,7 @@ def create_matrix():
     # --- PERFORMANCE TUNING FOR ZERO 2 WH FLICKER ---
     options.gpio_slowdown = 4                 # Gives fast Pi Zero 2 WH clock stability
     options.pwm_bits = 7                      # Lightens single-core pin-flipping overhead
-    options.refresh_rate_limit = 120           # Locks solid, uniform refresh lighting floor
+    
     
     return RGBMatrix(options=options)
 
