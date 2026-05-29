@@ -75,7 +75,7 @@ async def music_listener_task():
     # Slice parameters for time-domain speech filtering
     num_slices = 8
     slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
-    hardware_noise_floor = 275.0  # Calibrated above your 250.0 room-hum baseline
+    hardware_noise_floor = 340.0  # Calibrated above your 340.0 room-hum baseline
     
     AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
     
@@ -170,15 +170,18 @@ async def music_listener_task():
                                     system.album_art_image = Image.open(io.BytesIO(img_data))
                                     system.current_mode = "MUSIC"
                 else:
+                    # Clear visual cue when the API scans but doesn't find a fingerprint match
                     if system.current_mode == "MUSIC":
                         print("Track boundary or unknown audio source hit. Reverting to weather.")
                         system.current_song_id = None
                         system.album_art_image = None
                         system.current_mode = "WEATHER"
-                        
+                    else:
+                        print("AudD API scanned successfully, but no matching song fingerprint was discovered.")
+
             except Exception as e:
                 print(f"Audio processing engine error: {e}")
-                
+
 # --- TASK 3: GRAPHICS RENDERING CORE ---
 async def display_renderer_task(matrix):
     canvas = Image.new("RGB", (64, 64))
