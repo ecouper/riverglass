@@ -75,7 +75,7 @@ async def music_listener_task():
     # Slice parameters for time-domain speech filtering
     num_slices = 8
     slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
-    hardware_noise_floor = 340.0  # Calibrated above your 340.0 room-hum baseline
+    hardware_noise_floor = 15.0  # Calibrated above your 340.0 room-hum baseline
     
     AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
     
@@ -113,10 +113,14 @@ async def music_listener_task():
                 for i in range(num_slices):
                     start_idx = i * slice_length
                     end_idx = start_idx + slice_length
-                    slice_data = flattened_audio[start_idx:end_idx]
+                    slice_data = flattened_audio[start_idx:end_idx].astype(np.float32)
                     
-                    # Calculate RMS for this specific 0.5-second slice
-                    slice_rms = np.sqrt(np.mean(slice_data.astype(np.float32)**2))
+                    # --- THE DC OFFSET REMOVAL ---
+                    # Subtract the mean to center the audio wave perfectly on 0
+                    zero_centered_slice = slice_data - np.mean(slice_data)
+                    
+                    # Calculate the true RMS of just the audio movement
+                    slice_rms = np.sqrt(np.mean(zero_centered_slice**2))
                     
                     if slice_rms < hardware_noise_floor:
                         silent_slices_count += 1
