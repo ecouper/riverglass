@@ -70,7 +70,12 @@ async def music_listener_task():
     
     device_index = 0
     sample_rate = 44100  
-    duration = 4  # Shorter 4-second audio window for low latency identification
+    duration = 4  # Total 4-second listening window
+    
+    # Slice parameters for time-domain speech filtering
+    num_slices = 8
+    slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
+    hardware_noise_floor = 275.0  # Calibrated above your 250.0 room-hum baseline
     
     AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
     
@@ -85,7 +90,7 @@ async def music_listener_task():
                     system.current_song_id = None
                     system.album_art_image = None
                     system.current_mode = "WEATHER"
-                await asyncio.sleep(60) # Quiet sleep interval
+                await asyncio.sleep(60)
                 continue
             
             # VARIABLE REFRESH CONTROL: 8s if searching, 30s if cruising on active track
@@ -102,38 +107,37 @@ async def music_listener_task():
                 await asyncio.sleep(duration)
                 flattened_audio = audio_snippet.flatten()
                 
-                # 3. DSP FILTER: STEP A - VOLUME RMS CHECK
-                rms_volume = np.sqrt(np.mean(flattened_audio.astype(np.float32)**2))
-                if rms_volume < 40.0:
-                    if system.current_mode == "MUSIC":
-                        print(f"Room fell silent (Vol: {rms_volume:.1f}). Reverting to weather.")
+                # 3. ADVANCED DSP: MULTI-SLICE TIME VARIANCE ANALYSIS (SPEECH VS MUSIC)
+                silent_slices_count = 0
+                
+                for i in range(num_slices):
+                    start_idx = i * slice_length
+                    end_idx = start_idx + slice_length
+                    slice_data = flattened_audio[start_idx:end_idx]
+                    
+                    # Calculate RMS for this specific 0.5-second slice
+                    slice_rms = np.sqrt(np.mean(slice_data.astype(np.float32)**2))
+                    
+                    if slice_rms < hardware_noise_floor:
+                        silent_slices_count += 1
+
+                # If the room has dynamic gaps (like talking/TV dialogue), drop it
+                # Max 1 empty slice allowed (to handle brief song transitions or ambient drops)
+                if silent_slices_count > 1:
+                    if system.current_mode == "MUSIC" and silent_slices_count >= 6:
+                        print(f"Room fell silent or track ended ({silent_slices_count}/{num_slices} empty slices). Reverting to weather.")
                         system.current_song_id = None
                         system.album_art_image = None
                         system.current_mode = "WEATHER"
+                    else:
+                        print(f"Speech/TV dynamic dialogue detected ({silent_slices_count}/{num_slices} empty slices). Discarding block.")
                     continue
                 
-                # 4. DSP FILTER: STEP B - SPEECH VS MUSIC FREQUENCY DETECTOR (FFT)
-                # Compute power spectral density
-                fft_vals = np.abs(np.fft.rfft(flattened_audio))
-                freqs = np.fft.rfftfreq(len(flattened_audio), 1.0 / sample_rate)
+                # Total overall window volume check for sanity
+                total_rms = np.sqrt(np.mean(flattened_audio.astype(np.float32)**2))
+                print(f"Valid continuous music confirmed (Vol: {total_rms:.1f}, Gaps: {silent_slices_count}/{num_slices}). Querying AudD API...")
                 
-                # Extract out-of-vocal spectral energy (Bass below 150Hz, Treble above 5000Hz)
-                bass_mask = (freqs < 150)
-                treble_mask = (freqs > 5000)
-                vocal_mask = (freqs >= 150) & (freqs <= 5000)
-                
-                bass_energy = np.sum(fft_vals[bass_mask])
-                treble_energy = np.sum(fft_vals[treble_mask])
-                vocal_energy = np.sum(fft_vals[vocal_mask])
-                
-                # If audio is concentrated solely in the voice pocket, bypass the cloud entirely
-                if vocal_energy > (bass_energy + treble_energy) * 2.5:
-                    print(f"Speech detected (Vol: {rms_volume:.1f}). Discarding vocal block.")
-                    continue
-                
-                print(f"Valid music signal confirmed (Vol: {rms_volume:.1f}). Querying AudD API...")
-                
-                # 5. API COOLDOWN TRANSMIT
+                # 4. API COOLDOWN TRANSMIT
                 wav_bytes = convert_to_wav_bytes(flattened_audio, sample_rate)
                 data = aiohttp.FormData()
                 data.add_field('api_token', AUDD_API_TOKEN)
@@ -174,7 +178,7 @@ async def music_listener_task():
                         
             except Exception as e:
                 print(f"Audio processing engine error: {e}")
-
+                
 # --- TASK 3: GRAPHICS RENDERING CORE ---
 async def display_renderer_task(matrix):
     canvas = Image.new("RGB", (64, 64))
