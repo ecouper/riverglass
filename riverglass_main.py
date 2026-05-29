@@ -73,7 +73,7 @@ async def music_listener_task():
     # Slice parameters for time-domain speech filtering
     num_slices = 8
     slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
-    hardware_noise_floor = 15.0  # Calibrated for cleanly zero-centered raw int16 arrays
+    hardware_noise_floor = 200.0  # Calibrated for cleanly zero-centered raw int16 arrays
     
     AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
     
