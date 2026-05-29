@@ -73,7 +73,7 @@ async def music_listener_task():
     # Slice parameters for time-domain speech filtering
     num_slices = 8
     slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
-    hardware_noise_floor = 200.0  # Calibrated for cleanly zero-centered raw int16 arrays
+    hardware_noise_floor = 320.0  # Calibrated safely above your 298.0 zero-centered hum floor
     
     AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
     
@@ -81,7 +81,7 @@ async def music_listener_task():
         while system.is_running:
             current_hour = datetime.now().hour
             
-            # 1. NIGHTTIME CURFEW GUARD (11:00 PM - 9:00 AM)
+            # 1. NIGHTTIME CURFEW GUARD
             if current_hour >= 23 or current_hour < 9:
                 if system.current_mode == "MUSIC":
                     print("Nighttime curfew active. Forcing display into Weather Mode.")
@@ -91,13 +91,11 @@ async def music_listener_task():
                 await asyncio.sleep(60)
                 continue
             
-            # VARIABLE REFRESH CONTROL: 8s if searching, 30s if cruising on active track
             sleep_interval = 30 if system.current_mode == "MUSIC" else 8
             await asyncio.sleep(sleep_interval)
             
             try:
                 # 2. RECORD SNIPPET NATIVELY VIA ARECORD
-                # Captures raw PCM to stdout, bypassing broken root user library abstractions
                 cmd = ["arecord", "-d", str(duration), "-f", "S16_LE", "-r", str(sample_rate), "-t", "raw"]
                 
                 loop = asyncio.get_event_loop()
@@ -108,7 +106,6 @@ async def music_listener_task():
                 
                 flattened_audio = np.frombuffer(raw_bytes, dtype=np.int16)
                 
-                # Prevent mathematical parsing errors if the buffer came back short
                 if len(flattened_audio) < (num_slices * slice_length):
                     continue
 
@@ -120,11 +117,8 @@ async def music_listener_task():
                     end_idx = start_idx + slice_length
                     slice_data = flattened_audio[start_idx:end_idx].astype(np.float32)
                     
-                    # --- THE DC OFFSET REMOVAL ---
                     # Subtract the mean to drop the offset and center the audio wave perfectly on 0
                     zero_centered_slice = slice_data - np.mean(slice_data)
-                    
-                    # Calculate the true RMS of just the kinetic audio movement
                     slice_rms = np.sqrt(np.mean(zero_centered_slice**2))
                     
                     if slice_rms < hardware_noise_floor:
@@ -146,8 +140,19 @@ async def music_listener_task():
                 total_rms = np.sqrt(np.mean(zero_centered_total**2))
                 print(f"Valid continuous music confirmed (Vol: {total_rms:.1f}, Gaps: {silent_slices_count}/{num_slices}). Querying AudD API...")
                 
-                # 4. API COOLDOWN TRANSMIT
-                wav_bytes = convert_to_wav_bytes(flattened_audio, sample_rate)
+                # --- DSP STEP C: AUTOMATIC PEAK NORMALIZATION ---
+                # Prevents clipping distortion from close sources and amplifies distant faint signals
+                max_peak = np.max(np.abs(zero_centered_total))
+                if max_peak > 0:
+                    # Target a healthy, unclipped peak intensity at 75% of int16 ceiling (approx 24500)
+                    target_peak = 24500.0
+                    normalized_audio = (zero_centered_total / max_peak) * target_peak
+                    processed_audio = normalized_audio.astype(np.int16)
+                else:
+                    processed_audio = flattened_audio
+
+                # 4. API COOLDOWN TRANSMIT (Using optimized, undistorted audio)
+                wav_bytes = convert_to_wav_bytes(processed_audio, sample_rate)
                 data = aiohttp.FormData()
                 data.add_field('api_token', AUDD_API_TOKEN)
                 data.add_field('file', wav_bytes, filename='audio.wav', content_type='audio/wav')
