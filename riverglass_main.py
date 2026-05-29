@@ -98,11 +98,11 @@ async def music_listener_task():
             await asyncio.sleep(sleep_interval)
             
             try:
-                # 2. RECORD SNIPPET
+                # 2. RECORD SNIPPET (Bypass explicit device mapping to clear the root freeze)
                 loop = asyncio.get_event_loop()
                 audio_snippet = await loop.run_in_executor(
                     None, 
-                    lambda: sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16', device=device_index)
+                    lambda: sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype='int16')
                 )
                 await asyncio.sleep(duration)
                 flattened_audio = audio_snippet.flatten()
