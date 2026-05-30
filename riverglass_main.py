@@ -1,11 +1,7 @@
 import asyncio
-import time
 import sys
 import io
-import wave
 import aiohttp
-import subprocess
-import numpy as np
 from datetime import datetime
 from rgbmatrix import RGBMatrix, RGBMatrixOptions
 from PIL import Image, ImageDraw
@@ -31,214 +27,119 @@ def create_matrix():
 # --- SYSTEM STATES ---
 class RiverglassState:
     def __init__(self):
-        self.current_mode = "WEATHER"  # "WEATHER" or "MUSIC"
-        self.album_art_image = None    # Holds the active PIL Image object
-        self.current_song_id = None    # Tracks unique song signature
-        self.weather_data = {"temp": "72", "low": "54", "high": "88", "condition": "Clear"}
+        self.weather_data = {"temp": "--", "low": "--", "high": "--", "condition": "Clear"}
         self.is_running = True
 
 system = RiverglassState()
 
-# --- HELPER: CONVERT RAW AUDIO TO WAV BYTES ---
-def convert_to_wav_bytes(audio_data, sample_rate):
-    byte_io = io.BytesIO()
-    with wave.open(byte_io, 'wb') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)  # 16-bit audio
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(audio_data.tobytes())
-    return byte_io.getvalue()
-
-# --- TASK 1: LIVE WEATHER DATA FETCH ---
+# --- TASK 1: LIVE WEATHER DATA FETCH (OPENWEATHERMAP) ---
 async def weather_updater_task():
-    print("Weather data synchronization engine initialized.")
-    while system.is_running:
-        try:
-            # Placeholder: Hook your local weather API provider here
-            system.weather_data["temp"] = "72"
-            system.weather_data["low"] = "54"
-            system.weather_data["high"] = "88"
-            system.weather_data["condition"] = "Clear"  # Options: Clear, Cloudy, Rainy
-            await asyncio.sleep(900)
-        except asyncio.CancelledError:
-            break
-
-# --- TASK 2: ADAPTIVE ACOUSTIC ENGINE + DSP SPEECH FILTER ---
-async def music_listener_task():
-    print("Adaptive acoustic fingerprinting engine initialized (Native System Driver Pipeline).")
+    print("OpenWeatherMap synchronization engine initialized.")
     
-    sample_rate = 44100  
-    duration = 4  # Total 4-second listening window
-    
-    # Slice parameters for time-domain speech filtering
-    num_slices = 8
-    slice_length = int((duration * sample_rate) / num_slices) # 22,050 samples per 0.5s chunk
-    hardware_noise_floor = 320.0  # Calibrated safely above your 298.0 zero-centered hum floor
-    
-    AUDD_API_TOKEN = "8f2f40bd8c4816ce7fd2ffea57676bab" 
+    API_KEY = "b4d97d57f1f3ed1e0e683fad8fd06794"
+    # Hardcoded for Durham, NC coordinates
+    LAT = "35.9940"
+    LON = "-78.8986"
+    URL = f"https://api.openweathermap.org/data/2.5/weather?lat={LAT}&lon={LON}&appid={API_KEY}&units=imperial"
     
     async with aiohttp.ClientSession() as session:
         while system.is_running:
-            current_hour = datetime.now().hour
-            
-            # 1. NIGHTTIME CURFEW GUARD
-            if current_hour >= 23 or current_hour < 9:
-                if system.current_mode == "MUSIC":
-                    print("Nighttime curfew active. Forcing display into Weather Mode.")
-                    system.current_song_id = None
-                    system.album_art_image = None
-                    system.current_mode = "WEATHER"
-                await asyncio.sleep(60)
-                continue
-            
-            sleep_interval = 30 if system.current_mode == "MUSIC" else 8
-            await asyncio.sleep(sleep_interval)
-            
             try:
-                # 2. RECORD SNIPPET NATIVELY VIA ARECORD
-                cmd = ["arecord", "-d", str(duration), "-f", "S16_LE", "-r", str(sample_rate), "-t", "raw"]
-                
-                loop = asyncio.get_event_loop()
-                raw_bytes = await loop.run_in_executor(
-                    None, 
-                    lambda: subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-                )
-                
-                flattened_audio = np.frombuffer(raw_bytes, dtype=np.int16)
-                
-                if len(flattened_audio) < (num_slices * slice_length):
-                    continue
-
-                # 3. ADVANCED DSP: MULTI-SLICE TIME VARIANCE ANALYSIS WITH AC COUPLING
-                silent_slices_count = 0
-                
-                for i in range(num_slices):
-                    start_idx = i * slice_length
-                    end_idx = start_idx + slice_length
-                    slice_data = flattened_audio[start_idx:end_idx].astype(np.float32)
-                    
-                    # Subtract the mean to drop the offset and center the audio wave perfectly on 0
-                    zero_centered_slice = slice_data - np.mean(slice_data)
-                    slice_rms = np.sqrt(np.mean(zero_centered_slice**2))
-                    
-                    if slice_rms < hardware_noise_floor:
-                        silent_slices_count += 1
-
-                # Filter out dynamic speech/TV gaps
-                if silent_slices_count > 1:
-                    if system.current_mode == "MUSIC" and silent_slices_count >= 6:
-                        print(f"Room fell silent or track ended ({silent_slices_count}/{num_slices} empty slices). Reverting to weather.")
-                        system.current_song_id = None
-                        system.album_art_image = None
-                        system.current_mode = "WEATHER"
-                    else:
-                        print(f"Speech/TV dynamic dialogue detected ({silent_slices_count}/{num_slices} empty slices). Discarding block.")
-                    continue
-                
-                # Calculate total RMS on the cleanly zero-centered total array for accurate logs
-                zero_centered_total = flattened_audio.astype(np.float32) - np.mean(flattened_audio.astype(np.float32))
-                total_rms = np.sqrt(np.mean(zero_centered_total**2))
-                print(f"Valid continuous music confirmed (Vol: {total_rms:.1f}, Gaps: {silent_slices_count}/{num_slices}). Querying AudD API...")
-                
-                # --- DSP STEP C: AUTOMATIC PEAK NORMALIZATION ---
-                # Prevents clipping distortion from close sources and amplifies distant faint signals
-                max_peak = np.max(np.abs(zero_centered_total))
-                if max_peak > 0:
-                    # Target a healthy, unclipped peak intensity at 75% of int16 ceiling (approx 24500)
-                    target_peak = 24500.0
-                    normalized_audio = (zero_centered_total / max_peak) * target_peak
-                    processed_audio = normalized_audio.astype(np.int16)
-                else:
-                    processed_audio = flattened_audio
-
-                # 4. API COOLDOWN TRANSMIT (Using optimized, undistorted audio)
-                wav_bytes = convert_to_wav_bytes(processed_audio, sample_rate)
-                data = aiohttp.FormData()
-                data.add_field('api_token', AUDD_API_TOKEN)
-                data.add_field('file', wav_bytes, filename='audio.wav', content_type='audio/wav')
-                data.add_field('return', 'apple_music,spotify') 
-                
-                async with session.post('https://api.audd.io/', data=data) as response:
-                    result = await response.json()
-                    
-                if result.get("status") == "success" and result.get("result"):
-                    song_info = result["result"]
-                    song_id = f"{song_info.get('artist')}-{song_info.get('title')}"
-                    
-                    if system.current_song_id != song_id:
-                        print(f"🎵 Track Identified: {song_info.get('title')} by {song_info.get('artist')}")
-                        system.current_song_id = song_id
+                async with session.get(URL) as response:
+                    if response.status == 200:
+                        data = await response.json()
                         
-                        art_url = None
-                        if 'spotify' in song_info and song_info['spotify']:
-                            images = song_info['spotify'].get('album', {}).get('images', [])
-                            if images:
-                                art_url = images[0].get('url')
-                        if not art_url:
-                            art_url = song_info.get('album', {}).get('cover_image')
-                            
-                        if art_url:
-                            async with session.get(art_url) as img_resp:
-                                if img_resp.status == 200:
-                                    img_data = await img_resp.read()
-                                    system.album_art_image = Image.open(io.BytesIO(img_data))
-                                    system.current_mode = "MUSIC"
-                else:
-                    if system.current_mode == "MUSIC":
-                        print("Track boundary or unknown audio source hit. Reverting to weather.")
-                        system.current_song_id = None
-                        system.album_art_image = None
-                        system.current_mode = "WEATHER"
+                        # Extract main metrics
+                        current_temp = round(data["main"]["temp"])
+                        temp_min = round(data["main"]["temp_min"])
+                        temp_max = round(data["main"]["temp_max"])
+                        
+                        # Map OpenWeatherMap condition codes to our vector generator categories
+                        main_cond = data["weather"][0]["main"]
+                        if main_cond in ["Clear"]:
+                            condition = "Clear"
+                        elif main_cond in ["Clouds"]:
+                            condition = "Cloudy"
+                        elif main_cond in ["Rain", "Drizzle", "Thunderstorm"]:
+                            condition = "Rainy"
+                        elif main_cond in ["Snow"]:
+                            condition = "Snowy"
+                        else:
+                            condition = "Cloudy"  # Fallback safety
+                        
+                        system.weather_data["temp"] = str(current_temp)
+                        system.weather_data["low"] = str(temp_min)
+                        system.weather_data["high"] = str(temp_max)
+                        system.weather_data["condition"] = condition
+                        
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] Weather Synced: {current_temp}°F, {condition}")
                     else:
-                        print("AudD API scanned successfully, but no matching song fingerprint was discovered.")
-
+                        print(f"Weather API Error: HTTP Status {response.status}")
+                        
             except Exception as e:
-                print(f"Audio processing engine error: {e}")
+                print(f"Weather sync connection drop: {e}")
+                
+            # Refresh every 10 minutes to stay accurate without hitting API limits
+            await asyncio.sleep(600)
 
-# --- TASK 3: GRAPHICS RENDERING CORE ---
+# --- TASK 2: MODERN GRAPHICS RENDERING CORE ---
 async def display_renderer_task(matrix):
     canvas = Image.new("RGB", (64, 64))
     draw = ImageDraw.Draw(canvas)
     
     print("Graphics rendering core active.")
     while system.is_running:
+        # Clear background to crisp black
         draw.rectangle((0, 0, 63, 63), fill=(0, 0, 0))
         
-        if system.current_mode == "WEATHER":
-            condition = system.weather_data["condition"]
+        condition = system.weather_data["condition"]
+        
+        # --- MODERN PROCEDURAL VECTOR ICON SET ---
+        if condition == "Clear":
+            # Sharp modern sun architecture
+            draw.ellipse([22, 12, 42, 32], fill=(255, 200, 0)) # Sun core
+            # Symmetrical clean accent lines
+            draw.line([32, 4, 32, 9], fill=(255, 160, 0), width=1)
+            draw.line([32, 35, 32, 40], fill=(255, 160, 0), width=1)
+            draw.line([14, 22, 19, 22], fill=(255, 160, 0), width=1)
+            draw.line([45, 22, 50, 22], fill=(255, 160, 0), width=1)
             
-            # --- PROCEDURAL VECTOR WEATHER ICON GENERATOR ---
-            if condition == "Clear":
-                draw.ellipse([22, 12, 42, 32], fill=(255, 215, 0))
-                draw.line([32, 4, 32, 9], fill=(255, 215, 0), width=1)
-                draw.line([32, 35, 32, 40], fill=(255, 215, 0), width=1)
-                draw.line([14, 22, 19, 22], fill=(255, 215, 0), width=1)
-                draw.line([45, 22, 50, 22], fill=(255, 215, 0), width=1)
-            elif condition == "Cloudy":
-                draw.ellipse([14, 20, 28, 34], fill=(180, 180, 180))
-                draw.ellipse([22, 14, 42, 34], fill=(220, 220, 220))
-                draw.ellipse([36, 18, 50, 34], fill=(180, 180, 180))
-                draw.rectangle([20, 26, 44, 34], fill=(200, 200, 200))
-            elif condition == "Rainy":
-                draw.ellipse([20, 14, 44, 30], fill=(130, 130, 130))
-                draw.line([24, 34, 22, 40], fill=(0, 150, 255), width=1)
-                draw.line([32, 34, 30, 40], fill=(0, 150, 255), width=1)
-                draw.line([40, 34, 38, 40], fill=(0, 150, 255), width=1)
+        elif condition == "Cloudy":
+            # Sleek layered flat-design cloud compilation
+            draw.ellipse([14, 20, 28, 34], fill=(100, 110, 120))  # Left base puff
+            draw.ellipse([34, 18, 48, 32], fill=(120, 130, 140))  # Right puff
+            draw.ellipse([20, 14, 40, 34], fill=(160, 170, 180))  # Main center cap
+            draw.rectangle([20, 24, 42, 34], fill=(160, 170, 180)) # Bottom joiner
             
-            # --- TRI-COLOR TEMPERATURE DISPLAY BANNER ---
-            draw.text((2, 52),  f"{system.weather_data['temp']}", fill=(255, 255, 0))   # Yellow
-            draw.text((24, 52), f"{system.weather_data['low']}",  fill=(0, 150, 255))  # Blue
-            draw.text((46, 52), f"{system.weather_data['high']}", fill=(255, 50, 50))   # Red
+        elif condition == "Rainy":
+            # Dark slate cloud foundation
+            draw.ellipse([18, 12, 32, 26], fill=(70, 80, 90))
+            draw.ellipse([28, 10, 44, 26], fill=(90, 100, 110))
+            draw.rectangle([22, 18, 40, 26], fill=(90, 100, 110))
+            # Precise neon vertical rain streaks
+            draw.line([24, 30, 24, 35], fill=(0, 180, 255), width=1)
+            draw.line([32, 32, 32, 37], fill=(0, 140, 255), width=1)
+            draw.line([40, 29, 40, 34], fill=(0, 180, 255), width=1)
             
-            matrix.SetImage(canvas)
-            
-        elif system.current_mode == "MUSIC" and system.album_art_image:
-            resized_art = system.album_art_image.resize((64, 64))
-            matrix.SetImage(resized_art)
-        else:
-            matrix.SetImage(canvas)
-            
-        await asyncio.sleep(0.03)
+        elif condition == "Snowy":
+            # Soft gray cloud shelf
+            draw.ellipse([20, 12, 44, 26], fill=(110, 120, 130))
+            # Minimal geometric falling ice points
+            draw.point([24, 32], fill=(240, 248, 255))
+            draw.point([32, 35], fill=(255, 255, 255))
+            draw.point([40, 31], fill=(240, 248, 255))
+
+        # --- MODERN ALIGNED WEATHER TYPOGRAPHY BANNER ---
+        # Current temp showcased prominently in bold yellow
+        draw.text((4, 50), f"{system.weather_data['temp']}°", fill=(255, 230, 0))
+        
+        # High and Low grouped cleanly on the right hand side
+        draw.text((32, 46), f"H:{system.weather_data['high']}", fill=(255, 70, 70))
+        draw.text((32, 54), f"L:{system.weather_data['low']}", fill=(0, 180, 255))
+        
+        # Swap hardware matrix framework display pipeline
+        matrix.SetImage(canvas)
+        await asyncio.sleep(0.05) # Silky smooth 20 FPS refresh ceiling
 
 async def main():
     try:
@@ -250,11 +151,10 @@ async def main():
     try:
         await asyncio.gather(
             weather_updater_task(),
-            music_listener_task(),
             display_renderer_task(matrix)
         )
     except KeyboardInterrupt:
-        print("\nShutting down Riverglass framework cleanly...")
+        print("\nShutting down Riverglass Weather Dashboard cleanly...")
     finally:
         system.is_running = False
 
