@@ -20,13 +20,27 @@ def create_matrix():
     options.pwm_bits = 7                      # Lightens pin-flipping single-core overhead
     return RGBMatrix(options=options)
 
-# --- IN RAINBOWS TRACKING ENGINE ---
-def draw_tracked_text(draw, text, x, y, spacing, fill):
-    """Draws text letter-by-letter with custom pixel spacing for a stylized look."""
-    current_x = x
-    for char in text:
-        draw.text((current_x, y), char, fill=fill)
-        current_x += 5 + spacing
+# --- CONTINUOUS SEAMLESS WRAPPING TRACKING ENGINE ---
+def draw_wrapping_tapestry(draw, word_color_list, start_x, start_y, char_spacing, line_height):
+    """Flows a sequence of differently colored words across lines seamlessly, wrapping characters."""
+    current_x = start_x
+    current_y = start_y
+    
+    for word, color in word_color_list:
+        # Append a space after the word to separate it from the next chunk
+        word_to_draw = word + " "
+        
+        for char in word_to_draw:
+            # Check if this single character will overflow the 64-pixel right boundary
+            if current_x + 5 > 64:
+                current_x = start_x       # Carriage return to left margin
+                current_y += line_height  # Drop down to the next row
+                
+            # Draw the character at the current coordinates
+            draw.text((current_x, current_y), char, fill=color)
+            
+            # Step forward by character width (5px) + tracking space
+            current_x += 5 + char_spacing
 
 async def main():
     try:
@@ -38,69 +52,89 @@ async def main():
     canvas = Image.new("RGB", (64, 64))
     draw = ImageDraw.Draw(canvas)
     
-    # Expanded naming convention list (6 slots total)
     photo_slots = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg"]
     image_cache = {}
     
     # State Engine
     start_time = time.time()
-    current_mode = 0  # 0: Thank You, 1: Trip Tapestry, 2+: Photo Slots
-    cycle_duration = 8.0  # Seconds per screen
+    current_mode = 0  
+    cycle_duration = 8.0  
     
-    print("Flexible Smart-Cycling Engine Active! Press Ctrl+C to terminate.")
+    # Pre-compile the color tapestry tuple array (Word, RGB Color)
+    tapestry_words = [
+        ("SAFARI", (255, 50, 50)),       # Neon Red
+        ("LAKE", (0, 235, 255)),         # Cyan
+        ("JAMES", (0, 235, 255)),        # Cyan
+        ("MUSEUM", (50, 255, 50)),       # Emerald Green
+        ("TRAIN", (255, 0, 200)),        # Magenta
+        ("BOAT", (255, 0, 200)),         # Magenta
+        ("BASEBALL", (255, 140, 0)),     # Bright Orange
+        ("FOAM", (200, 100, 255)),       # Electric Purple
+        ("PARTY", (200, 100, 255)),      # Electric Purple
+        ("CHOCOLATE", (255, 255, 255)),  # White
+        ("PORK", (255, 100, 0)),         # Deep Amber
+        ("BLUEBERRIES", (255, 230, 0))   # Laser Yellow
+    ]
+    
+    print("Polished Wrapped Showcase Engine Active! Press Ctrl+C to stop.")
     
     while True:
-        # Clear background to pure matte black
         draw.rectangle((0, 0, 63, 63), fill=(0, 0, 0))
         
-        # Check if it's time to advance the screen
         if time.time() - start_time > cycle_duration:
-            # Clear out the cache periodically so it catches newly uploaded files
-            image_cache.clear()
-            
-            # Smart Skip Logic Loop
+            image_cache.clear() # Clear memory map to automatically catch newly dropped files
             attempts = 0
-            while attempts < 8:  # Safety ceiling to prevent infinite loops
-                # Advance mode index
+            while attempts < 8:
                 current_mode += 1
-                total_possible_modes = 2 + len(photo_slots) # Text screens (2) + Photo slots (6) = 8 total
+                total_possible_modes = 2 + len(photo_slots)
                 if current_mode >= total_possible_modes:
                     current_mode = 0
                 
-                # Modes 0 and 1 are always text, so they never get skipped
                 if current_mode < 2:
                     break
                     
-                # For modes 2+, check if the specific image file exists right now
                 img_index = current_mode - 2
                 filename = photo_slots[img_index]
                 if os.path.exists(filename):
-                    break  # Found a valid file! Break out of the skip finder.
-                    
+                    break  
                 attempts += 1
                 
             start_time = time.time()
             
-        # --- SCREEN 0: THE THANK YOU BANNER ---
+        # --- SCREEN 0: RE-COLORED CLEAN THANK YOU DISPLAY ---
         if current_mode == 0:
-            draw_tracked_text(draw, "THANK YOU", x=2, y=2, spacing=2, fill=(0, 255, 150))   
-            draw_tracked_text(draw, "FOR VISITING!", x=2, y=12, spacing=1, fill=(0, 180, 255)) 
-            draw_tracked_text(draw, "LOVE,", x=2, y=28, spacing=3, fill=(255, 100, 0))       
-            draw_tracked_text(draw, "LEO,", x=2, y=38, spacing=3, fill=(255, 0, 150))        
-            draw_tracked_text(draw, "RACHEL,", x=2, y=46, spacing=1, fill=(255, 230, 0))     
-            draw_tracked_text(draw, "AND ERIC", x=2, y=54, spacing=2, fill=(255, 255, 255))  
+            # Block A: Mint Green Greeting Tones
+            mint_green = (0, 255, 150)
+            # Custom character tracking built in manually: letter + spacing width
+            for i, char in enumerate("THANK YOU"):
+                draw.text((2 + (i * 7), 2), char, fill=mint_green)
+            for i, char in enumerate("FOR VISITING!"):
+                draw.text((2 + (i * 6), 12), char, fill=mint_green)
+                
+            # Block B: Electric Blue Family Signature Tones
+            electric_blue = (0, 180, 255)
+            for i, char in enumerate("LOVE,"):
+                draw.text((2 + (i * 8), 28), char, fill=electric_blue)
+            for i, char in enumerate("LEO,"):
+                draw.text((2 + (i * 8), 38), char, fill=electric_blue)
+            for i, char in enumerate("RACHEL,"):
+                draw.text((2 + (i * 6), 46), char, fill=electric_blue)
+            for i, char in enumerate("AND ERIC"):
+                draw.text((2 + (i * 7), 54), char, fill=electric_blue)
 
-        # --- SCREEN 1: THE TRIP HIGHLIGHT TAPESTRY ---
+        # --- SCREEN 1: SEAMLESS WRAPPING TRIP TAPESTRY ---
         elif current_mode == 1:
-            draw_tracked_text(draw, "SAFARI", x=2, y=1, spacing=4, fill=(255, 50, 50))       
-            draw_tracked_text(draw, "LAKE JAMES", x=2, y=10, spacing=1, fill=(0, 235, 255))   
-            draw_tracked_text(draw, "MUSEUM", x=2, y=19, spacing=4, fill=(50, 255, 50))      
-            draw_tracked_text(draw, "TRAIN BOAT", x=2, y=28, spacing=1, fill=(255, 0, 200))   
-            draw_tracked_text(draw, "BASEBALL", x=2, y=37, spacing=2, fill=(255, 140, 0))    
-            draw_tracked_text(draw, "FOAM PARTY", x=2, y=46, spacing=1, fill=(200, 100, 255)) 
-            draw_tracked_text(draw, "BLUEBERRIES", x=2, y=55, spacing=1, fill=(255, 255, 0))  
+            # Flows all elements seamlessly together with custom uniform grid padding
+            draw_wrapping_tapestry(
+                draw, 
+                word_color_list=tapestry_words, 
+                start_x=1, 
+                start_y=2, 
+                char_spacing=1, # Consistent spacing between adjacent letters
+                line_height=9   # Roomy line cushion preventing overlap
+            )
 
-        # --- SCREENS 2+: SMART IMAGE SLOTS (a.jpg through f.jpg) ---
+        # --- SCREENS 2+: PHOTO SLOTS (a.jpg through f.jpg) ---
         else:
             img_index = current_mode - 2
             filename = photo_slots[img_index]
@@ -117,7 +151,6 @@ async def main():
             if target_photo:
                 canvas.paste(target_photo, (0, 0))
 
-        # Push frame buffer to matrix display
         matrix.SetImage(canvas)
         await asyncio.sleep(0.1)
 
